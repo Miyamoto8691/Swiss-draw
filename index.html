@@ -1020,217 +1020,147 @@
             return;
         }
 
+        // 匿名化する人数の入力
+        let anonInput = prompt("下位何名を匿名化しますか？（0以上の数値を入力）", "0");
+        let anonCount = parseInt(anonInput);
+        if (isNaN(anonCount) || anonCount < 0) anonCount = 0;
+
         const players = calculateTiebreakers(state.players);
         players.sort((a, b) => b.score - a.score || b.omwp - a.omwp || b.oomwp - a.oomwp);
+
+        // 匿名化対象のインデックスを特定（下位からanonCount名分）
+        // ただし、描画時に「棄権者かどうか」で実際の置き換えを判断します
+        const anonThresholdIndex = players.length - anonCount;
 
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
 
-        // 画像・表のレイアウト設定
+        // レイアウト設定
         const rowHeight = 40;     
         const headerHeight = 50;  
         const padding = 20;       
-        // 列幅の設定 [順位, 名前, スコア, Promotion(追加), OMWP, 状態]
         const colWidths = [50, 200, 70, 90, 80, 80]; 
         const tableWidth = colWidths.reduce((a, b) => a + b, 0);
         const width = tableWidth + (padding * 2);
-        // タイトルエリア、ヘッダー、全プレイヤー分、フッターの合計高さ
         const height = 70 + headerHeight + (players.length * rowHeight) + padding;
 
         canvas.width = width;
         canvas.height = height;
 
-        // 背景描画
-        ctx.fillStyle = '#ffffff'; // 白背景
+        // 背景・タイトル描画
+        ctx.fillStyle = '#ffffff'; 
         ctx.fillRect(0, 0, width, height);
-
+        
         if (state.bgImageData) {
-            // Promiseを使って画像の読み込みを待機
             await new Promise((resolve) => {
                 const img = new Image();
                 img.onload = () => {
-                    // CSSの object-fit: cover（短い方でトリミング）を再現
                     const imgRatio = img.width / img.height;
                     const canvasRatio = width / height;
-
-                    let dWidth, dHeight, dX, dY, sWidth, sHeight, sX, sY;
-
+                    let sWidth, sHeight, sX, sY;
                     if (imgRatio > canvasRatio) {
-                        // 画像が横長すぎる場合：高さを合わせる
-                        sHeight = img.height;
-                        sWidth = img.height * canvasRatio; // Canvasの比率に合わせる
-                        sX = (img.width - sWidth) / 2;     // 中央を切り取る
-                        sY = 0;
+                        sHeight = img.height; sWidth = img.height * canvasRatio;
+                        sX = (img.width - sWidth) / 2; sY = 0;
                     } else {
-                        // 画像が縦長すぎる（または同じ）場合：幅を合わせる
-                        sWidth = img.width;
-                        sHeight = img.width / canvasRatio; // Canvasの比率に合わせる
-                        sX = 0;
-                        sY = (img.height - sHeight) / 2;   // 中央を切り取る
+                        sWidth = img.width; sHeight = img.width / canvasRatio;
+                        sX = 0; sY = (img.height - sHeight) / 2;
                     }
-
-                    // 描画処理
-                    ctx.save(); // 現在の状態を保存
-                    
-                    // 透過度α値を設定（0.0 〜 1.0）
-                    ctx.globalAlpha = 0.07; // 
-                    
-                    // Canvas全体に描画 (ソース画像をトリミングしてターゲット全体に広げる)
+                    ctx.save();
+                    ctx.globalAlpha = 0.07;
                     ctx.drawImage(img, sX, sY, sWidth, sHeight, 0, 0, width, height);
-                    
-                    ctx.restore(); // 透明度設定を元に戻す
+                    ctx.restore();
                     resolve();
                 };
-                img.onerror = () => resolve(); // エラー時は背景なしで進める
-                img.src = state.bgImageData; // 読み込み開始
+                img.onerror = () => resolve();
+                img.src = state.bgImageData;
             });
         }
 
-        // タイトルエリア
-        ctx.fillStyle = '#1e3a8a'; // 濃い青
+        ctx.fillStyle = '#1e3a8a';
         ctx.font = 'bold 24px sans-serif';
         ctx.textBaseline = 'middle';
-        const titleY = 35;
-        ctx.fillText(`${state.tournamentName} - Round ${state.currentRound} Result`, padding, titleY);
+        ctx.fillText(`${state.tournamentName} - Round ${state.currentRound} Result`, padding, 35);
 
-        // ヘッダー描画
         const headerY = 70;
-        ctx.fillStyle = '#f3f4f6'; // 薄いグレー背景
+        ctx.fillStyle = '#f3f4f6';
         ctx.fillRect(padding, headerY, tableWidth, headerHeight);
-
-        ctx.fillStyle = '#4b5563'; // ヘッダーテキスト色
+        ctx.fillStyle = '#4b5563';
         ctx.font = 'bold 14px sans-serif';
         const headers = ['Rank', 'Player', 'Score', 'Promotion', 'OMWP', 'Status'];
-        
-        let currentX = padding;
+        let curX = padding;
         headers.forEach((h, i) => {
-            // テキストを中央寄せにするための計算
             const textWidth = ctx.measureText(h).width;
-            const textX = currentX + (colWidths[i] / 2) - (textWidth / 2);
-            ctx.fillText(h, textX, headerY + (headerHeight / 2));
-            currentX += colWidths[i];
+            ctx.fillText(h, curX + (colWidths[i] / 2) - (textWidth / 2), headerY + (headerHeight / 2));
+            curX += colWidths[i];
         });
 
         // データ行の描画
-        ctx.font = '16px sans-serif';
-
-        // 【同率順位計算用】
         let currentDisplayRank = 0;
         let lastScore = -1;
         let skippedRanks = 0;
+
+        const anonThresholdScore = (anonCount > 0 && anonThresholdIndex >= 0) 
+                                   ? players[anonThresholdIndex].score 
+                                   : -1;
         
         players.forEach((p, rowIndex) => {
             const y = headerY + headerHeight + (rowIndex * rowHeight);
-            
-            // 行の区切り線（薄いグレー）
             ctx.strokeStyle = '#e5e7eb';
             ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(padding, y);
-            ctx.lineTo(width - padding, y);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(width - padding, y); ctx.stroke();
 
-            // 同率順位の計算（飛び番形式）
-            if (p.score === lastScore) {
-                skippedRanks++;
-            } else {
-                currentDisplayRank += (1 + skippedRanks);
-                skippedRanks = 0;
-            }
+            if (p.score === lastScore) { skippedRanks++; } 
+            else { currentDisplayRank += (1 + skippedRanks); skippedRanks = 0; }
             lastScore = p.score;
 
-            // Promotion（スコア増加量）の計算
+            // 匿名化ロジックの適用
+            // 基準スコア(anonThresholdScore)以下のプレイヤーが対象
+            // 棄権者（withdrawn）ではない
+            let displayName = p.name;
+            if (anonCount > 0 && p.score <= anonThresholdScore && !p.withdrawn) {
+                displayName = "Anonymous";
+            }
+
+            // Promotion計算ロジック
             let promotion = 0;
-            if (state.currentRound === 0) {
-                // 第1ラウンドの場合、初期スコアは0なので、現在のスコアがそのまま増加量
-                promotion = p.score;
-            } else {
-                // 第2ラウンド以降の場合、1つ前のラウンド（currentRound - 1）の履歴を探す
+            if (state.currentRound > 0) {
                 const prevRoundData = state.roundsHistory[state.currentRound - 1];
-                if (prevRoundData && prevRoundData.pairings) {
-                    // そのラウンドのペアリングから、このプレイヤーを探す
+                if (prevRoundData) {
                     const match = prevRoundData.pairings.find(m => m.player1.id === p.id || (m.player2 && m.player2.id === p.id));
-                    
                     if (match) {
-                        // マッチが見つかった場合、その結果に基づいて、そのラウンドで得た点数を計算
-                        if (!match.player2) {
-                            // 不戦勝（Bye）の場合
-                            if (match.result === 'bye') promotion = state.winScore;
-                        } else {
-                            // 通常対戦の場合
+                        if (!match.player2) { if (match.result === 'bye') promotion = state.winScore; } 
+                        else {
                             const isP1 = match.player1.id === p.id;
                             const res = match.result;
-                            const winScore = state.winScore;
-                            const drawScore = state.drawScore;
-                            const bonusScore = state.bonusScore;
-                            const reliefScore = state.reliefScore;
-
-                            if ((res === 'player1' && isP1) || (res === 'player2' && !isP1)) {
-                                // 勝利
-                                promotion = winScore + (match.isBonus ? bonusScore : 0);
-                            } else if ((res === 'player2' && isP1) || (res === 'player1' && !isP1)) {
-                                // 敗北
-                                promotion = (match.isRelief ? reliefScore : 0);
-                            } else if (res === 'draw') {
-                                // 引き分け
-                                promotion = drawScore;
-                            }
+                            if ((res === 'player1' && isP1) || (res === 'player2' && !isP1)) promotion = state.winScore + (match.isBonus ? state.bonusScore : 0);
+                            else if ((res === 'player2' && isP1) || (res === 'player1' && !isP1)) promotion = (match.isRelief ? state.reliefScore : 0);
+                            else if (res === 'draw') promotion = state.drawScore;
                         }
                     }
                 }
-            }
+            } else { promotion = p.score; }
 
-            // 各列のデータ描画
             let x = padding;
-            const statusText = p.withdrawn ? 'Forfeit' : 'In Play';
-            const promoText = `+${promotion}`;
-
-            const rowData = [
-                `#${currentDisplayRank}`, // 計算した順位を使用
-                p.name,
-                p.score,
-                promoText,
-                p.omwp.toFixed(3),
-                statusText
-            ];
+            const rowData = [`#${currentDisplayRank}`, displayName, p.score, `+${promotion}`, p.omwp.toFixed(3), p.withdrawn ? 'Forfeit' : 'In Play'];
 
             rowData.forEach((data, colIndex) => {
-                // 基本のテキスト色
-                ctx.fillStyle = '#333333';
+                ctx.fillStyle = (colIndex === 1 && p.withdrawn) ? '#ef4444' : '#333333';
+                // 匿名化された名前は少し薄くする演出
+                if (colIndex === 1 && displayName === "Anonymous") ctx.fillStyle = '#9ca3af';
 
-                // 特別な色の設定
-                if (colIndex === 1 && p.withdrawn) {
-                    ctx.fillStyle = '#ef4444'; // 棄権者の名前は赤
-                } else if (colIndex === 3) {
-                    // Promotion列の色設定
-                    if (promotion > state.winScore) {
-                        ctx.fillStyle = '#f97316'; // ボーナス付き勝利（オレンジ）
-                    } else if (promotion === state.winScore) {
-                        ctx.fillStyle = '#059669'; // 通常勝利（緑）
-                    } else if (promotion === state.drawScore && state.drawScore > 0) {
-                        ctx.fillStyle = '#2563eb'; // 引き分け（青）
-                    } else if (promotion > 0 && promotion < state.winScore) {
-                        ctx.fillStyle = '#84cc16'; // 救済点のみ（黄緑）
-                    } else {
-                        ctx.fillStyle = '#6b7280'; // 0点（グレー）
-                    }
-                    if (promotion > 0) ctx.font = 'bold 16px sans-serif'; // 増加があれば太字
-                    else ctx.font = '16px sans-serif';
-                } else if (colIndex === 0 && p.rank <= 3) {
-                    ctx.font = 'bold 16px sans-serif'; // 上位3名の順位は太字
-                } else {
-                    ctx.font = '16px sans-serif';
+                if (colIndex === 3) {
+                    if (promotion > state.winScore) ctx.fillStyle = '#f97316';
+                    else if (promotion === state.winScore) ctx.fillStyle = '#059669';
+                    else if (promotion > 0) ctx.fillStyle = '#84cc16';
                 }
-                
-                // テキストを垂直中央、水平は各列の中央付近に描画
+                ctx.font = (p.rank <= 3 && colIndex === 0) || (colIndex === 3 && promotion > 0) ? 'bold 16px sans-serif' : '16px sans-serif';
                 ctx.fillText(data, x + 15, y + (rowHeight / 2));
                 x += colWidths[colIndex];
             });
         });
 
-        // 画像としてダウンロード
-        // ファイル名を生成（大会名_R[ラウンド数]_result.png）
-        const tournamentName = (state.tournamentName || 'tournament').replace(/[\s\/:*?"<>|]/g, '_'); // ファイル名に使えない文字を置換
+        // 保存処理
+        const tournamentName = (state.tournamentName || 'tournament').replace(/[\s\/:*?"<>|]/g, '_');
         const link = document.createElement('a');
         link.download = `${tournamentName}_R${state.currentRound}_result.png`;
         link.href = canvas.toDataURL('image/png');
