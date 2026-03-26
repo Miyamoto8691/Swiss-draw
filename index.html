@@ -184,6 +184,9 @@
       </div>
       
       <div id="controls-section" class="card" style="display:none;">
+        <div id="over-round-warning" style="display:none; color: #b91c1c; background-color: #fee2e2; padding: 10px; border-radius: 8px; margin-bottom: 10px; font-weight: bold; text-align: center; font-size: 0.9rem;">
+          必要ラウンド数を超えましたが続行しますか？<br>（これ以上は再戦発生の可能性が高くなります）
+        </div>
         <div class="flex-container" style="justify-content: space-between;">
           <div id="tournament-info">
             <p style="margin:0;"><strong>ラウンド:</strong> <span id="current-round"></span> / <span id="total-rounds"></span></p>
@@ -193,6 +196,7 @@
             <button id="back-round-btn" class="btn-yellow" onclick="handleGoBackRound()">前のラウンドに戻る</button>
             <button id="pairing-btn" class="btn-green" onclick="this.disabled=true; handleGeneratePairings();">ペアリング生成</button>
             <button id="next-round-btn" class="btn-indigo" onclick="handleAdvanceRound()">次ラウンドへ進む</button>
+            <button id="finish-tournament-btn" class="btn-red" style="display:none; background-color: #7c3aed;" onclick="handleFinishTournament()">最終結果を発表して終了</button>
             <button class="btn-red" onclick="handleResetTournament()">リセット</button>
           </div>
         </div>
@@ -292,6 +296,7 @@
         useRelief: false, reliefScore: 1,      
         useBonus: false, bonusScore: 1,
         bgImageData: null, // 画像データを保存するプロパティ
+        lastPlayerNames: null, // プレイヤー名の入力を保存するプロパティ
         isTournamentStarted: false, pairings: [],
         roundsHistory: [], finalStandings: null,
         announcementFinished: false
@@ -313,33 +318,62 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       loadState();
+      // 保存されたプレイヤーがいれば，入力欄に復元する
+      if (state.lastPlayerNames) {
+          const playerInput = document.getElementById('player-input');
+          if (playerInput) {
+              playerInput.value = state.lastPlayerNames;
+          }
+      }
       updateUI();
     });
 
     function updateUI() {
-      const isFinal = state.finalStandings !== null;
-      document.getElementById('tournament-name-display').textContent = state.tournamentName || 'トーナメント管理';
-      
-      const finalSection = document.getElementById('final-standings-section');
-      finalSection.style.display = isFinal ? 'block' : 'none';
-      document.getElementById('tournament-progress-section').style.display = isFinal ? 'none' : 'block';
+        const isFinal = state.finalStandings !== null;
+        document.getElementById('tournament-name-display').textContent = state.tournamentName || 'トーナメント管理';
+        
+        const finalSection = document.getElementById('final-standings-section');
+        finalSection.style.display = isFinal ? 'block' : 'none';
+        document.getElementById('tournament-progress-section').style.display = isFinal ? 'none' : 'block';
 
-      if (isFinal) {
-        if (state.announcementFinished) { 
-            // アニメーション終了後：表とボタンを表示
-            renderFinalStandings(); 
-            document.getElementById('final-standings-table').style.display = 'table';
-            document.getElementById('final-actions').style.display = 'flex';
-            document.getElementById('announcement-controls').style.display = 'none';
-        } else { 
-            // アニメーション開始前：表とボタンを隠し、「発表を開始」ボタンだけ出す
-            document.getElementById('announcement-controls').style.display = 'block';
-            document.getElementById('final-standings-table').style.display = 'none';
-            document.getElementById('final-actions').style.display = 'none';
+        if (isFinal) {
+            if (state.announcementFinished) { 
+                renderFinalStandings(); 
+                document.getElementById('final-standings-table').style.display = 'table';
+                document.getElementById('final-actions').style.display = 'flex';
+                document.getElementById('announcement-controls').style.display = 'none';
+            } else { 
+                document.getElementById('announcement-controls').style.display = 'block';
+                document.getElementById('final-standings-table').style.display = 'none';
+                document.getElementById('final-actions').style.display = 'none';
+            }
+        } else {
+            renderTournamentProgress();
+
+            // 必要ラウンド数を超えても続行するためのボタン制御ロジック
+            if (state.isTournamentStarted) {
+                const finishBtn = document.getElementById('finish-tournament-btn');
+                const overWarning = document.getElementById('over-round-warning');
+                const currentRoundNum = state.currentRound + 1;
+                const totalRoundsNum = state.totalRounds;
+
+                // 推奨ラウンドを終えた後（次ラウンドの準備中）に表示
+                if (currentRoundNum > totalRoundsNum) {
+                    if (finishBtn) finishBtn.style.display = 'inline-block';
+                    if (overWarning) overWarning.style.display = 'block';
+                } else {
+                    if (finishBtn) finishBtn.style.display = 'none';
+                    if (overWarning) overWarning.style.display = 'none';
+                }
+                
+                // 既存の要素（ラウンド数表示など）の更新
+                const currentRoundEl = document.getElementById('current-round');
+                if (currentRoundEl) currentRoundEl.textContent = currentRoundNum;
+                
+                const totalRoundsEl = document.getElementById('total-rounds');
+                if (totalRoundsEl) totalRoundsEl.textContent = totalRoundsNum;
+            }
         }
-      } else {
-        renderTournamentProgress();
-      }
     }
 
     function renderTournamentProgress() {
@@ -489,8 +523,7 @@
         state.roundsHistory.push({ round: state.currentRound, pairings: JSON.parse(JSON.stringify(state.pairings)) });
         state.currentRound++;
         state.pairings = [];
-        if (state.currentRound >= state.totalRounds) { calculateAndSetFinalStandings(); } 
-        else { await handleGeneratePairings(); }
+        await handleGeneratePairings();
         saveState(); updateUI();
     }
 
@@ -748,8 +781,8 @@
       saveState(); updateUI();
     }
     function handleResetTournament() {
-      if (confirm('トーナメントをリセットしますか？（勝ち点などの設定値は保持されます）')) {
-        // 現在の設定を保存
+      if (confirm('トーナメントをリセットしますか？（プレイヤーと勝ち点設定値は保持されます）')) {
+        const namesOnly = state.players.map(p => p.name).join('\n');
         const currentConfig = {
           winScore: state.winScore,
           drawScore: state.drawScore,
@@ -757,7 +790,10 @@
           reliefScore: state.reliefScore,
           useBonus: state.useBonus,
           bonusScore: state.bonusScore,
-          bgImageData: state.bgImageData
+          bgImageData: state.bgImageData,
+          // 内部のプレイヤーリストは空にして、名前だけを保存
+          players: [],
+          lastPlayerNames: namesOnly
         };
 
         // 初期化
@@ -806,6 +842,14 @@
         ps.forEach((p, i) => { p.rank = i + 1; p.displayRank = i + 1; });
         state.finalStandings = ps;
         saveState();
+    }
+
+    function handleFinishTournament() {
+        if (!confirm('大会を終了して最終結果を発表しますか？（これ以降ラウンドは追加できません）')) return;
+        calculateAndSetFinalStandings();
+        saveState();
+        updateUI();
+        startAnnouncement(); // 自動でアニメーションを開始
     }
 
     // 発表演出の開始
